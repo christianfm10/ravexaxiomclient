@@ -1,0 +1,358 @@
+{
+    "type": "userState",
+    "state": {
+        "tables": {
+            "newPairs": true,
+            "finalStretch": false,
+            "migrated": false
+        },
+        "filters": {
+            "newPairs": {
+                "age": {
+                    "max": 3,
+                    "min": null
+                },
+                "fees": {
+                    "max": null,
+                    "min": null
+                },
+                "txns": {
+                    "max": null,
+                    "min": null
+                },
+                "bundle": {
+                    "max": null,
+                    "min": null
+                },
+                "volume": {
+                    "max": null,
+                    "min": null
+                },
+                "dexPaid": false,
+                "holders": {
+                    "max": null,
+                    "min": null
+                },
+                "numBuys": {
+                    "max": null,
+                    "min": null
+                },
+                "snipers": {
+                    "max": null,
+                    "min": null
+                },
+                "twitter": {
+                    "max": null,
+                    "min": null
+                },
+                "website": false,
+                "botUsers": {
+                    "max": null,
+                    "min": null
+                },
+                "insiders": {
+                    "max": null,
+                    "min": null
+                },
+                "numSells": {
+                    "max": null,
+                    "min": null
+                },
+                "telegram": false,
+                "liquidity": {
+                    "max": null,
+                    "min": null
+                },
+                "marketCap": {
+                    "max": 20,
+                    "min": null
+                },
+                "protocols": {
+                    "bags": false,
+                    "bonk": false,
+                    "boop": false,
+                    "orca": false,
+                    "pump": true,
+                    "heaven": false,
+                    "mayhem": false,
+                    "daosFun": false,
+                    "pumpAmm": false,
+                    "raydium": false,
+                    "moonshot": false,
+                    "launchLab": false,
+                    "meteoraAmm": false,
+                    "launchACoin": false,
+                    "moonshotApp": false,
+                    "meteoraAmmV2": false,
+                    "virtualCurve": false,
+                    "jupiterStudio": false
+                },
+                "devHolding": {
+                    "max": null,
+                    "min": null
+                },
+                "numDevPairs": {
+                    "max": null,
+                    "min": null
+                },
+                "bondingCurve": {
+                    "max": null,
+                    "min": null
+                },
+                "top10Holders": {
+                    "max": null,
+                    "min": null
+                },
+                "mustEndInPump": false,
+                "numMigrations": {
+                    "max": null,
+                    "min": null
+                },
+                "twitterExists": false,
+                "searchKeywords": [],
+                "excludeKeywords": [],
+                "showQuoteTokens": {
+                    "sol": true,
+                    "usd1": false,
+                    "usdc": false
+                },
+                "atLeastOneSocial": false,
+                "showPumpOffchain": false
+            },
+            "finalStretch": {
+                "age": {
+                    "max": null,
+                    "min": null
+                },
+                "fees": {
+                    "max": null,
+                    "min": null
+                },
+                "txns": {
+                    "max": null,
+                    "min": null
+                },
+                "bundle": {
+                    "max": null,
+                    "min": null
+                },
+                "volume": {
+                    "max": null,
+                    "min": null
+                },
+                "dexPaid": false,
+                "holders": {
+                    "max": null,
+                    "min": null
+                },
+                "numBuys": {
+                    "max": null,
+                    "min": null
+                },
+                "snipers": {
+                    "max": null,
+                    "min": null
+                },
+                "twitter": {
+                    "max": null,
+                    "min": null
+                },
+                "website": false,
+                "botUsers": {
+                    "max": null,
+                    "min": null
+                },
+                "insiders": {
+                    "max": null,
+                    "min": null
+                },
+                "numSells": {
+                    "max": null,
+                    "min": null
+                },
+                "telegram": false,
+                "liquidity": {
+                    "max": null,
+                    "min": null
+                },
+                "marketCap": {
+                    "max": null,
+                    "min": null
+                },
+                "protocols": {
+                    "bags": false,
+                    "bonk": false,
+                    "boop": false,
+                    "pump": false,
+                    "heaven": false,
+                    "pumpAmm": false,
+                    "raydium": false,
+                    "moonshot": false,
+                    "launchLab": false,
+                    "meteoraAmm": false,
+                    "launchACoin": false,
+                    "moonshotApp": false,
+                    "meteoraAmmV2": false,
+                    "virtualCurve": false,
+                    "jupiterStudio": false
+                },
+                "devHolding": {
+                    "max": null,
+                    "min": null
+                },
+                "numDevPairs": {
+                    "max": null,
+                    "min": null
+                },
+                "bondingCurve": {
+                    "max": null,
+                    "min": null
+                },
+                "top10Holders": {
+                    "max": null,
+                    "min": null
+                },
+                "mustEndInPump": false,
+                "numMigrations": {
+                    "max": null,
+                    "min": null
+                },
+                "twitterExists": false,
+                "searchKeywords": [],
+                "excludeKeywords": [],
+                "showQuoteTokens": {
+                    "sol": true,
+                    "usd1": false,
+                    "usdc": false
+                },
+                "atLeastOneSocial": false,
+                "showPumpOffchain": false
+            },
+            "migrated": {
+                "age": {
+                    "max": null,
+                    "min": null
+                },
+                "fees": {
+                    "max": null,
+                    "min": null
+                },
+                "txns": {
+                    "max": null,
+                    "min": null
+                },
+                "bundle": {
+                    "max": null,
+                    "min": null
+                },
+                "volume": {
+                    "max": null,
+                    "min": null
+                },
+                "dexPaid": false,
+                "holders": {
+                    "max": null,
+                    "min": null
+                },
+                "numBuys": {
+                    "max": null,
+                    "min": null
+                },
+                "snipers": {
+                    "max": null,
+                    "min": null
+                },
+                "twitter": {
+                    "max": null,
+                    "min": null
+                },
+                "website": false,
+                "botUsers": {
+                    "max": null,
+                    "min": null
+                },
+                "insiders": {
+                    "max": null,
+                    "min": null
+                },
+                "numSells": {
+                    "max": null,
+                    "min": null
+                },
+                "telegram": false,
+                "liquidity": {
+                    "max": null,
+                    "min": null
+                },
+                "marketCap": {
+                    "max": null,
+                    "min": null
+                },
+                "protocols": {
+                    "bags": false,
+                    "bonk": false,
+                    "boop": false,
+                    "pump": false,
+                    "sugar": false,
+                    "heaven": false,
+                    "mayhem": false,
+                    "pumpAmm": false,
+                    "raydium": false,
+                    "moonshot": false,
+                    "launchLab": false,
+                    "wavebreak": false,
+                    "meteoraAmm": false,
+                    "launchACoin": false,
+                    "moonshotApp": false,
+                    "meteoraAmmV2": false,
+                    "virtualCurve": false,
+                    "jupiterStudio": false
+                },
+                "devHolding": {
+                    "max": null,
+                    "min": null
+                },
+                "numDevPairs": {
+                    "max": null,
+                    "min": null
+                },
+                "bondingCurve": {
+                    "max": null,
+                    "min": null
+                },
+                "top10Holders": {
+                    "max": null,
+                    "min": null
+                },
+                "mustEndInPump": false,
+                "numMigrations": {
+                    "max": null,
+                    "min": null
+                },
+                "twitterExists": false,
+                "searchKeywords": [],
+                "excludeKeywords": [],
+                "showQuoteTokens": {
+                    "usd1": false,
+                    "usdc": false
+                },
+                "atLeastOneSocial": false,
+                "showPumpOffchain": false
+            }
+        },
+        "blacklist": {
+            "ca-HuK7ni59U4pyNGacaDQ4ZDtc61FEhku5JXcYSDT6u6iG": {
+                "value": "HuK7ni59U4pyNGacaDQ4ZDtc61FEhku5JXcYSDT6u6iG",
+                "type": "ca",
+                "time": 1765827943389
+            }
+        },
+        "showHiddenPulseTokens": false,
+        "unhideMigrated": false,
+        "pausedPairs": {
+            "newPairs": [],
+            "finalStretch": [],
+            "migrated": []
+        }
+    }
+}

@@ -1,0 +1,28 @@
+[project]
+name = "axiomclient"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "christianfm10", email = "christian.flores@dekoding.pe" }]
+requires-python = ">=3.14"
+dependencies = [
+    "aiogram>=3.23.0",
+    "aiosqlite>=0.20.0",
+    "asyncpg>=0.30.0",
+    "base58>=2.1.1",
+    "cryptography>=46.0.3",
+    "httpx>=0.28.1",
+    "imapclient>=3.0.1",
+    "msgpack>=1.1.2",
+    "python-dotenv>=1.2.1",
+    "solder>=0.0.1",
+    "websockets>=15.0.1",
+    "sqlalchemy[asyncio]>=2.0.0",
+]
+
+[project.scripts]
+axiomclient = "axiomclient:main"
+
+[build-system]
+requires = ["uv_build>=0.9.5,<0.10.0"]
+build-backend = "uv_build"
