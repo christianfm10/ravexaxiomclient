@@ -91,10 +91,10 @@ FIELD_MAP = {
 }
 
 # Configuration constants
-CLEANUP_INTERVAL_SECONDS = 30
+CLEANUP_INTERVAL_SECONDS = 5
 BATCH_SIZE = 1000
 MAX_DEV_TOKENS_THRESHOLD = 20  # Pairs with more dev tokens are ignored
-PAIR_AGE_THRESHOLD_MINUTES = 5  # How old before persisting to DB
+PAIR_AGE_THRESHOLD_MINUTES = 1  # How old before persisting to DB
 
 
 # ============================================================================
@@ -373,20 +373,33 @@ async def handle_new_token_message(message: Dict[str, Any]) -> None:
         if not should_accept_new_token(content):
             return
 
+        # Check if pair already exists (might have partial data from early update)
+        existing_pair = pair_state.get(pair_address)
+
         # Create pair item from message
         pair_item = PairItem(**content)
 
         # Initialize market cap tracking
         initialize_market_cap_fields(pair_item)
 
+        # Preserve dev_wallet_funding if it arrived earlier
+        if existing_pair and existing_pair.dev_wallet_funding:
+            data = pair_item.model_dump()
+            data["dev_wallet_funding"] = existing_pair.dev_wallet_funding
+            pair_item = PairItem.model_validate(data)
+            logger.info(
+                f"Updated pair with early funding data: {pair_address} | "
+                f"Funding: {existing_pair.dev_wallet_funding.amount_sol} SOL"
+            )
+
         # Store in memory
         pair_state[pair_address] = pair_item
 
-        logger.info(
-            f"New token tracked: {pair_address} | "
-            f"Name: {pair_item.token_name} | "
-            f"Ticker: {pair_item.token_ticker}"
-        )
+        # logger.info(
+        #     f"New token tracked: {pair_address} | "
+        #     f"Name: {pair_item.token_name} | "
+        #     f"Ticker: {pair_item.token_ticker}"
+        # )
 
     except Exception as e:
         logger.error(f"Failed to handle new token message: {e}", exc_info=True)
@@ -487,10 +500,35 @@ async def process_pair_update_message(message: List[Any]) -> None:
 
         # Pair not in memory - may not be tracked yet
         if pair_item is None:
-            # Log if we're missing funding for a pair
-            for field_index, _ in changes:
+            # Check if this update contains dev_wallet_funding
+            funding_data = None
+            for field_index, new_value in changes:
                 if field_index == 39:  # dev_wallet_funding
-                    logger.info(f"Funding update for untracked pair: {pair_address}")
+                    funding_data = new_value
+                    break
+
+            # If funding arrived before new_token message, create partial entry
+            if funding_data:
+                try:
+                    dev_wallet_funding = DevWalletFunding.model_validate(funding_data)
+                    # Create minimal PairItem with funding and current timestamp
+                    # Format: 2025-12-19T20:03:01.517Z (milliseconds + Z suffix)
+                    now = datetime.now(timezone.utc)
+                    created_at = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+                    partial_pair = PairItem(
+                        pair_address=pair_address,
+                        dev_wallet_funding=dev_wallet_funding,
+                        created_at=created_at,
+                    )
+                    pair_state[pair_address] = partial_pair
+                    logger.info(
+                        f"Created partial pair with early funding: {pair_address} | "
+                        f"Funding: {dev_wallet_funding.amount_sol} SOL"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create partial pair for {pair_address}: {e}"
+                    )
             return
 
         # Convert to dict for easier manipulation
@@ -535,17 +573,55 @@ async def process_new_pairs_message(message: List[Any]) -> None:
     Process type 2 pulse messages (bulk new pair announcements).
 
     ## Parameters
-    - `message`: List containing [msg_type, new_pairs_data]
+    - `message`: List containing [msg_type, pair_data_array]
 
-    ## Design Notes
-    Currently logs for monitoring purposes. Full implementation would
-    create PairItem objects from the bulk data.
+    ## Message Structure
+    The pair_data_array contains all pair fields in specific positions:
+    - Position 0: pair_address
+    - Position 1: token_address
+    - Position 39: dev_wallet_funding (if available)
+    - ... (other fields per FIELD_MAP)
+
+    ## Processing Logic
+    Only updates pairs that already exist in pair_state. This is useful
+    for receiving funding information for pairs we're already tracking.
     """
     try:
-        msg_type, new_pairs = message
-        data = new_pairs[1]
-        pair_address = data[0]
-        logger.info(f"Received bulk pair message (type {msg_type}): {pair_address}")
+        msg_type, pair_data = message
+
+        # Extract pair_address from position 0
+        if not pair_data or len(pair_data) < 1:
+            logger.warning("Empty pair data in type 2 message")
+            return
+
+        pair_address = pair_data[0]
+
+        # Only process if pair is already in memory state
+        pair_item = pair_state.get(pair_address)
+        if pair_item is None:
+            # Pair not tracked yet, ignore this message
+            return
+
+        # Extract dev_wallet_funding from position 39 if available
+        if len(pair_data) > 39 and pair_data[39] is not None:
+            funding_data = pair_data[39]
+
+            # Validate and update funding information
+            try:
+                dev_wallet_funding = DevWalletFunding.model_validate(funding_data)
+
+                # Convert to dict, update, and validate
+                data = pair_item.model_dump()
+                data["dev_wallet_funding"] = dev_wallet_funding
+                pair_state[pair_address] = PairItem.model_validate(data)
+
+                logger.info(
+                    f"Updated funding for tracked pair {pair_address}: "
+                    f"{dev_wallet_funding.amount_sol} SOL"
+                )
+            except Exception as e:
+                logger.error(f"Failed to validate funding data for {pair_address}: {e}")
+
     except Exception as e:
         logger.error(f"Failed to process new pairs message: {e}", exc_info=True)
 
@@ -711,13 +787,15 @@ async def main() -> None:
             tg.create_task(cleanup_and_persist_old_pairs(db_manager))
             tg.create_task(run_websocket_monitoring(db_manager))
 
-    except* KeyboardInterrupt:
-        logger.info("Shutdown signal received")
     except* Exception as e:
         logger.error(f"Fatal error in main loop: {e}", exc_info=True)
+        raise
     finally:
         logger.info("=== Axiom Monitor Stopped ===")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("✅ Shutdown completed gracefully")

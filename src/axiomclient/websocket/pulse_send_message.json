@@ -9,8 +9,9 @@
         "filters": {
             "newPairs": {
                 "age": {
-                    "max": 3,
-                    "min": null
+                    "max": 5,
+                    "min": null,
+                    "unit": "minutes"
                 },
                 "fees": {
                     "max": null,
@@ -64,7 +65,7 @@
                     "min": null
                 },
                 "marketCap": {
-                    "max": 20,
+                    "max": null,
                     "min": null
                 },
                 "protocols": {

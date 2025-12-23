@@ -123,13 +123,18 @@ asyncio.run(main())
 """
 
 # Standard library imports
+import asyncio
 import base64
 import json
 import logging
+import os
 import msgpack
 from typing import Any, Callable, Dict, Optional
 
 # Third-party imports
+# aiogram: Telegram bot library for sending notifications
+from aiogram import Bot
+
 # websockets: Modern asyncio-based WebSocket client library
 # Provides async/await support for WebSocket connections with excellent performance
 import websockets
@@ -278,6 +283,44 @@ class AxiomWebSocketClient:
         # Format: {"new_pairs": callback_fn, "token_mcap_0x123...": callback_fn}
         self._callbacks: Dict[str, Callable] = {}
 
+        # Reconnection configuration
+        self._max_reconnect_attempts = 5
+        self._reconnect_delay_seconds = 5
+        self._is_reconnecting = False
+
+        # Store subscriptions for reconnection
+        self._active_subscriptions: Dict[str, Any] = {}
+
+        # Telegram bot for notifications
+        self._telegram_bot: Optional[Bot] = None
+        self._telegram_chat_id: Optional[str] = None
+        self._setup_telegram()
+
+    def _setup_telegram(self) -> None:
+        """Setup Telegram bot for notifications if credentials are available."""
+        telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+        if telegram_token and telegram_chat_id:
+            try:
+                self._telegram_bot = Bot(token=telegram_token)
+                self._telegram_chat_id = telegram_chat_id
+                self.logger.info("✅ Telegram notifications enabled")
+            except Exception as e:
+                self.logger.warning(f"Failed to setup Telegram bot: {e}")
+        else:
+            self.logger.info("ℹ️ Telegram notifications disabled (no credentials)")
+
+    async def _send_telegram_notification(self, message: str) -> None:
+        """Send notification via Telegram if bot is configured."""
+        if self._telegram_bot and self._telegram_chat_id:
+            try:
+                await self._telegram_bot.send_message(
+                    chat_id=self._telegram_chat_id, text=message, parse_mode="HTML"
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to send Telegram notification: {e}")
+
     def _setup_logging_handler(self, log_level: int) -> None:
         """
         Configure logging handler for console output.
@@ -301,6 +344,113 @@ class AxiomWebSocketClient:
         )
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
+
+    async def _reconnect(self, connection_type: str = "main") -> bool:
+        """
+        Attempt to reconnect to WebSocket with exponential backoff.
+
+        ## Parameters
+        - `connection_type`: Type of connection to reconnect ("main" or "pulse")
+
+        ## Returns
+        - `bool`: True if reconnection successful, False otherwise
+
+        ## Reconnection Strategy
+        1. Close existing connections
+        2. Wait with exponential backoff
+        3. Attempt to reconnect
+        4. Restore all active subscriptions
+        5. Retry up to max_reconnect_attempts
+
+        ## Design Notes
+        Uses exponential backoff to avoid overwhelming the server.
+        Automatically restores all subscriptions that were active before disconnect.
+        """
+        if self._is_reconnecting:
+            self.logger.debug("Reconnection already in progress")
+            return False
+
+        self._is_reconnecting = True
+
+        try:
+            for attempt in range(1, self._max_reconnect_attempts + 1):
+                self.logger.info(
+                    f"🔄 Reconnection attempt {attempt}/{self._max_reconnect_attempts} "
+                    f"for {connection_type} WebSocket..."
+                )
+
+                # Wait with exponential backoff
+                if attempt > 1:
+                    delay = self._reconnect_delay_seconds * (2 ** (attempt - 2))
+                    self.logger.info(f"Waiting {delay} seconds before retry...")
+                    await asyncio.sleep(delay)
+
+                try:
+                    # Close existing connection if any
+                    if connection_type == "main" and self.ws:
+                        await self.ws.close()
+                        self.ws = None
+                    elif connection_type == "pulse" and self.ws_pulse:
+                        await self.ws_pulse.close()
+                        self.ws_pulse = None
+
+                    # Attempt reconnection
+                    if connection_type == "main":
+                        success = await self.connect()
+                    else:  # pulse
+                        # Reconnect pulse using stored subscription info
+                        pulse_sub = self._active_subscriptions.get("pulse")
+                        if pulse_sub:
+                            success = await self.subscribe_pulse(
+                                pulse_sub["callback"], pulse_sub.get("user_state")
+                            )
+                        else:
+                            success = False
+
+                    if not success:
+                        continue
+
+                    # Restore subscriptions for main connection
+                    if connection_type == "main":
+                        self.logger.info("Restoring subscriptions...")
+                        for room, sub_info in self._active_subscriptions.items():
+                            if sub_info["type"] == "regular":
+                                try:
+                                    await self._send_join_message(room)
+                                    self.logger.info(
+                                        f"✅ Restored subscription: {room}"
+                                    )
+                                except Exception as e:
+                                    self.logger.error(
+                                        f"Failed to restore subscription {room}: {e}"
+                                    )
+
+                    self.logger.info(
+                        f"✅ Successfully reconnected {connection_type} WebSocket"
+                    )
+
+                    # Send Telegram notification about successful reconnection
+                    await self._send_telegram_notification(
+                        f"✅ <b>WebSocket Reconnected</b>\n"
+                        f"Connection: {connection_type}\n"
+                        f"Status: Successfully restored after {attempt} attempt(s)"
+                    )
+
+                    return True
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Reconnection attempt {attempt} failed: {e}",
+                        exc_info=(attempt == self._max_reconnect_attempts),
+                    )
+
+            self.logger.error(
+                f"❌ Failed to reconnect after {self._max_reconnect_attempts} attempts"
+            )
+            return False
+
+        finally:
+            self._is_reconnecting = False
 
     async def connect(self) -> bool:
         """
@@ -483,6 +633,12 @@ class AxiomWebSocketClient:
 
         # Register callback for new_pairs room
         self._callbacks[ROOM_NEW_PAIRS] = callback
+
+        # Store subscription for reconnection
+        self._active_subscriptions[ROOM_NEW_PAIRS] = {
+            "type": "regular",
+            "callback": callback,
+        }
 
         try:
             # Send join message to server
@@ -747,6 +903,13 @@ class AxiomWebSocketClient:
             # Register callback for Pulse messages
             self._callbacks["pulse"] = callback
 
+            # Store subscription for reconnection
+            self._active_subscriptions["pulse"] = {
+                "type": "pulse",
+                "callback": callback,
+                "user_state": user_state,
+            }
+
             # Note: _pulse_message_handler() should be started manually
             # by the caller using TaskGroup for proper error handling
 
@@ -876,6 +1039,25 @@ class AxiomWebSocketClient:
             self.logger.warning(
                 f"⚠️ Pulse WebSocket connection closed: code={e.code} reason={e.reason}"
             )
+
+            # Send Telegram notification about disconnection
+            await self._send_telegram_notification(
+                f"⚠️ <b>WebSocket Disconnected</b>\n"
+                f"Connection: pulse\n"
+                f"Code: {e.code}\n"
+                f"Reason: {e.reason or 'Unknown'}\n"
+                f"Status: Attempting reconnection..."
+            )
+
+            # Attempt to reconnect
+            if await self._reconnect(connection_type="pulse"):
+                self.logger.info(
+                    "✅ Pulse WebSocket reconnected, resuming message handling"
+                )
+                # Recursively restart handler after successful reconnection
+                await self._pulse_message_handler()
+            else:
+                self.logger.error("❌ Failed to reconnect Pulse WebSocket")
 
         except Exception as e:
             self.logger.error(f"❌ Pulse message handler error: {e}", exc_info=True)
@@ -1036,6 +1218,25 @@ class AxiomWebSocketClient:
             self.logger.warning(
                 f"⚠️ WebSocket connection closed: code={e.code} reason={e.reason}"
             )
+
+            # Send Telegram notification about disconnection
+            await self._send_telegram_notification(
+                f"⚠️ <b>WebSocket Disconnected</b>\n"
+                f"Connection: main\n"
+                f"Code: {e.code}\n"
+                f"Reason: {e.reason or 'Unknown'}\n"
+                f"Status: Attempting reconnection..."
+            )
+
+            # Attempt to reconnect
+            if await self._reconnect(connection_type="main"):
+                self.logger.info(
+                    "✅ Main WebSocket reconnected, resuming message handling"
+                )
+                # Recursively restart handler after successful reconnection
+                await self._message_handler()
+            else:
+                self.logger.error("❌ Failed to reconnect main WebSocket")
 
         except Exception as e:
             self.logger.error(f"❌ WebSocket message handler error: {e}", exc_info=True)
