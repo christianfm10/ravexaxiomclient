@@ -4,7 +4,7 @@ Async database session management and operations.
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional, List
+from typing import AsyncIterator, Optional, List
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
@@ -15,7 +15,7 @@ from axiomclient.database.models import (
     DevWalletFundingDB,
     WalletAddressDB,
 )
-from axiomclient.models import PairItem
+from axiomclient.models import DevWalletFunding, PairItem
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class AsyncDatabaseManager:
         logger.info("Database connections closed")
 
     @asynccontextmanager
-    async def get_session(self) -> AsyncSession:
+    async def get_session(self) -> AsyncIterator[AsyncSession]:
         """
         Get an async database session with automatic cleanup.
 
@@ -242,13 +242,16 @@ class AsyncDatabaseManager:
         # If deployer wallet exists and pair has funding data, add it to the deployer
         if deployer_wallet and pair_item.dev_wallet_funding:
             await self._add_funding_to_wallet_if_not_exists(
-                session, deployer_wallet, pair_item
+                session, deployer_wallet, pair_item.dev_wallet_funding
             )
 
         return pair_db
 
     async def _add_funding_to_wallet_if_not_exists(
-        self, session: AsyncSession, wallet: WalletAddressDB, pair_item: PairItem
+        self,
+        session: AsyncSession,
+        wallet: WalletAddressDB,
+        dev_wallet_funding: DevWalletFunding,
     ):
         """
         Add funding to wallet only if signature doesn't already exist in database.
@@ -274,22 +277,22 @@ class AsyncDatabaseManager:
 
         # Get or create funding wallet address
         funding_wallet = await self._get_or_create_wallet(
-            session, pair_item.dev_wallet_funding.funding_wallet_address
+            session, dev_wallet_funding.funding_wallet_address
         )
 
         # Create new funding for this wallet
         funding_db = DevWalletFundingDB(
             wallet_address_id=wallet.id,
             funding_wallet_address_id=funding_wallet.id,
-            signature=pair_item.dev_wallet_funding.signature,
-            amount_sol=pair_item.dev_wallet_funding.amount_sol,
-            funded_at=pair_item.dev_wallet_funding.funded_at,
+            signature=dev_wallet_funding.signature,
+            amount_sol=dev_wallet_funding.amount_sol,
+            funded_at=dev_wallet_funding.funded_at,
         )
         session.add(funding_db)
         await session.flush()  # Flush to get the funding_db.id
 
         logger.debug(
-            f"Added new funding to wallet {wallet.address[:8]}... (funding_id={funding_db.id}, signature={pair_item.dev_wallet_funding.signature[:8]}...)"
+            f"Added new funding to wallet {wallet.address[:8]}... (funding_id={funding_db.id}, signature={dev_wallet_funding.signature[:8]}...)"
         )
 
     async def _update_pair_from_item_async(
@@ -303,67 +306,66 @@ class AsyncDatabaseManager:
             pair_db: PairDB instance to update
             pair_item: PairItem with new data
         """
-        # Update fields if they have values
-        if pair_item.signature:
-            pair_db.signature = pair_item.signature
-        if pair_item.token_address:
-            pair_db.token_address = pair_item.token_address
+        # Handle deployer_address separately (requires wallet lookup)
         if pair_item.deployer_address:
             deployer_wallet = await self._get_or_create_wallet(
                 session, pair_item.deployer_address
             )
             pair_db.deployer_address_id = deployer_wallet.id
-        if pair_item.token_name:
-            pair_db.token_name = pair_item.token_name
-        if pair_item.token_ticker:
-            pair_db.token_ticker = pair_item.token_ticker
-        if pair_item.token_uri:
-            pair_db.token_uri = pair_item.token_uri
-        if pair_item.token_decimals:
-            pair_db.token_decimals = pair_item.token_decimals
-        if pair_item.protocol:
-            pair_db.protocol = pair_item.protocol
-        # first_market_cap_sol solo se guarda la primera vez
+
+        # Fields that update only if they have truthy values
+        simple_fields = [
+            "signature",
+            "token_address",
+            "token_name",
+            "token_ticker",
+            "token_uri",
+            "token_decimals",
+            "protocol",
+            "created_at",
+        ]
+        for field in simple_fields:
+            value = getattr(pair_item, field, None)
+            if value:
+                setattr(pair_db, field, value)
+
+        # Fields that update if not None (including 0 or empty values)
+        nullable_fields = [
+            "initial_liquidity_sol",
+            "initial_liquidity_token",
+            "supply",
+            "bonding_curve_percent",
+            "migrated_tokens",
+            "dev_tokens",
+            "num_txn",
+            "num_buys",
+            "num_sells",
+            "market_cap_sol",
+        ]
+        for field in nullable_fields:
+            value = getattr(pair_item, field, None)
+            if value is not None:
+                setattr(pair_db, field, value)
+
+        # Special case: first_market_cap_sol - only set once
         if (
             pair_item.first_market_cap_sol is not None
             and pair_db.first_market_cap_sol is None
         ):
             pair_db.first_market_cap_sol = pair_item.first_market_cap_sol
-        # high_market_cap_sol se actualiza solo si es mayor al actual
+
+        # Special case: high_market_cap_sol - only update if greater
         if pair_item.high_market_cap_sol is not None:
             if (
                 pair_db.high_market_cap_sol is None
                 or pair_item.high_market_cap_sol > pair_db.high_market_cap_sol
             ):
                 pair_db.high_market_cap_sol = pair_item.high_market_cap_sol
-        # market_cap_sol siempre se actualiza con el último valor
-        if pair_item.market_cap_sol is not None:
-            pair_db.market_cap_sol = pair_item.market_cap_sol
-        if pair_item.initial_liquidity_sol is not None:
-            pair_db.initial_liquidity_sol = pair_item.initial_liquidity_sol
-        if pair_item.initial_liquidity_token is not None:
-            pair_db.initial_liquidity_token = pair_item.initial_liquidity_token
-        if pair_item.supply is not None:
-            pair_db.supply = pair_item.supply
-        if pair_item.bonding_curve_percent is not None:
-            pair_db.bonding_curve_percent = pair_item.bonding_curve_percent
-        if pair_item.migrated_tokens is not None:
-            pair_db.migrated_tokens = pair_item.migrated_tokens
-        if pair_item.created_at:
-            pair_db.created_at = pair_item.created_at
-        if pair_item.dev_tokens is not None:
-            pair_db.dev_tokens = pair_item.dev_tokens
-        if pair_item.num_txn is not None:
-            pair_db.num_txn = pair_item.num_txn
-        if pair_item.num_buys is not None:
-            pair_db.num_buys = pair_item.num_buys
-        if pair_item.num_sells is not None:
-            pair_db.num_sells = pair_item.num_sells
 
         # Add dev wallet funding to deployer if present
         if pair_item.dev_wallet_funding and pair_db.deployer:
             await self._add_funding_to_wallet_if_not_exists(
-                session, pair_db.deployer, pair_item
+                session, pair_db.deployer, pair_item.dev_wallet_funding
             )
 
     def _update_pair_from_item(self, pair_db: PairDB, pair_item: PairItem):
@@ -374,59 +376,55 @@ class AsyncDatabaseManager:
             pair_db: PairDB instance to update
             pair_item: PairItem with new data
         """
-        # Update fields if they have values
-        if pair_item.signature:
-            pair_db.signature = pair_item.signature
-        if pair_item.token_address:
-            pair_db.token_address = pair_item.token_address
-        if pair_item.deployer_address:
-            pair_db.deployer_address = pair_item.deployer_address
-        if pair_item.token_name:
-            pair_db.token_name = pair_item.token_name
-        if pair_item.token_ticker:
-            pair_db.token_ticker = pair_item.token_ticker
-        if pair_item.token_uri:
-            pair_db.token_uri = pair_item.token_uri
-        if pair_item.token_decimals:
-            pair_db.token_decimals = pair_item.token_decimals
-        if pair_item.protocol:
-            pair_db.protocol = pair_item.protocol
-        # first_market_cap_sol solo se guarda la primera vez
+        # Fields that update only if they have truthy values
+        simple_fields = [
+            "signature",
+            "token_address",
+            "deployer_address",
+            "token_name",
+            "token_ticker",
+            "token_uri",
+            "token_decimals",
+            "protocol",
+            "created_at",
+        ]
+        for field in simple_fields:
+            value = getattr(pair_item, field, None)
+            if value:
+                setattr(pair_db, field, value)
+
+        # Fields that update if not None (including 0 or empty values)
+        nullable_fields = [
+            "initial_liquidity_sol",
+            "initial_liquidity_token",
+            "supply",
+            "bonding_curve_percent",
+            "migrated_tokens",
+            "dev_tokens",
+            "num_txn",
+            "num_buys",
+            "num_sells",
+            "market_cap_sol",
+        ]
+        for field in nullable_fields:
+            value = getattr(pair_item, field, None)
+            if value is not None:
+                setattr(pair_db, field, value)
+
+        # Special case: first_market_cap_sol - only set once
         if (
             pair_item.first_market_cap_sol is not None
             and pair_db.first_market_cap_sol is None
         ):
             pair_db.first_market_cap_sol = pair_item.first_market_cap_sol
-        # high_market_cap_sol se actualiza solo si es mayor al actual
+
+        # Special case: high_market_cap_sol - only update if greater
         if pair_item.high_market_cap_sol is not None:
             if (
                 pair_db.high_market_cap_sol is None
                 or pair_item.high_market_cap_sol > pair_db.high_market_cap_sol
             ):
                 pair_db.high_market_cap_sol = pair_item.high_market_cap_sol
-        # market_cap_sol siempre se actualiza con el último valor
-        if pair_item.market_cap_sol is not None:
-            pair_db.market_cap_sol = pair_item.market_cap_sol
-        if pair_item.initial_liquidity_sol is not None:
-            pair_db.initial_liquidity_sol = pair_item.initial_liquidity_sol
-        if pair_item.initial_liquidity_token is not None:
-            pair_db.initial_liquidity_token = pair_item.initial_liquidity_token
-        if pair_item.supply is not None:
-            pair_db.supply = pair_item.supply
-        if pair_item.bonding_curve_percent is not None:
-            pair_db.bonding_curve_percent = pair_item.bonding_curve_percent
-        if pair_item.migrated_tokens is not None:
-            pair_db.migrated_tokens = pair_item.migrated_tokens
-        if pair_item.created_at:
-            pair_db.created_at = pair_item.created_at
-        if pair_item.dev_tokens is not None:
-            pair_db.dev_tokens = pair_item.dev_tokens
-        if pair_item.num_txn is not None:
-            pair_db.num_txn = pair_item.num_txn
-        if pair_item.num_buys is not None:
-            pair_db.num_buys = pair_item.num_buys
-        if pair_item.num_sells is not None:
-            pair_db.num_sells = pair_item.num_sells
 
     async def get_pair_by_address(self, pair_address: str) -> Optional[PairDB]:
         """
@@ -476,7 +474,10 @@ class AsyncDatabaseManager:
             result = await session.execute(
                 select(PairDB)
                 .join(WalletAddressDB, PairDB.deployer_address_id == WalletAddressDB.id)
-                .join(DevWalletFundingDB, DevWalletFundingDB.wallet_address_id == WalletAddressDB.id)
+                .join(
+                    DevWalletFundingDB,
+                    DevWalletFundingDB.wallet_address_id == WalletAddressDB.id,
+                )
             )
             return list(result.scalars().all())
 
@@ -492,15 +493,18 @@ class AsyncDatabaseManager:
         async with self.get_session() as session:
             # Total pairs
             total_result = await session.execute(select(func.count(PairDB.id)))
-            total_pairs = total_result.scalar()
+            total_pairs = total_result.scalar() or 0
 
             # Pairs with funding (via deployer wallet)
             funding_result = await session.execute(
                 select(func.count(PairDB.id))
                 .join(WalletAddressDB, PairDB.deployer_address_id == WalletAddressDB.id)
-                .join(DevWalletFundingDB, DevWalletFundingDB.wallet_address_id == WalletAddressDB.id)
+                .join(
+                    DevWalletFundingDB,
+                    DevWalletFundingDB.wallet_address_id == WalletAddressDB.id,
+                )
             )
-            pairs_with_funding = funding_result.scalar()
+            pairs_with_funding = funding_result.scalar() or 0
 
             # Total funding records
             funding_records_result = await session.execute(

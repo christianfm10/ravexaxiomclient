@@ -12,7 +12,7 @@ from sqlalchemy import (
     Index,
     func,
 )
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base, relationship, Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import JSONB
 
 Base = declarative_base()
@@ -120,8 +120,8 @@ class PairDB(Base):
     token_uri = Column(String, nullable=True)
     token_decimals = Column(Integer, nullable=True)
     protocol = Column(String, nullable=True, index=True)
-    first_market_cap_sol = Column(Float, nullable=True)
-    high_market_cap_sol = Column(Float, nullable=True)
+    first_market_cap_sol: Mapped[float] = mapped_column(Float, nullable=True)
+    high_market_cap_sol: Mapped[float] = mapped_column(Float, nullable=True)
     market_cap_sol = Column(Float, nullable=True)
     initial_liquidity_sol = Column(Float, nullable=True)
     initial_liquidity_token = Column(Float, nullable=True)
