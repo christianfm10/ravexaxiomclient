@@ -9,7 +9,12 @@ from typing import Optional, List
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
 
-from axiomclient.database.models import Base, PairDB, DevWalletFundingDB
+from axiomclient.database.models import (
+    Base,
+    PairDB,
+    DevWalletFundingDB,
+    WalletAddressDB,
+)
 from axiomclient.models import PairItem
 
 logger = logging.getLogger(__name__)
@@ -155,6 +160,36 @@ class AsyncDatabaseManager:
         logger.info(f"Saved {saved_count}/{len(pair_items)} pairs to database")
         return saved_count
 
+    async def _get_or_create_wallet(
+        self, session: AsyncSession, address: str
+    ) -> WalletAddressDB:
+        """
+        Get existing wallet or create new one.
+
+        Args:
+            session: Database session
+            address: Wallet address string
+
+        Returns:
+            WalletAddressDB instance
+        """
+        from sqlalchemy import select
+
+        # Check if wallet already exists
+        result = await session.execute(
+            select(WalletAddressDB).filter_by(address=address)
+        )
+        wallet = result.scalar_one_or_none()
+
+        if wallet:
+            return wallet
+
+        # Create new wallet
+        wallet = WalletAddressDB(address=address)
+        session.add(wallet)
+        await session.flush()  # Flush to get the ID
+        return wallet
+
     async def _create_pair_from_item_async(
         self, session: AsyncSession, pair_item: PairItem
     ) -> PairDB:
@@ -168,11 +203,20 @@ class AsyncDatabaseManager:
         Returns:
             PairDB instance
         """
+        # Get or create deployer wallet if deployer_address exists
+        deployer_wallet_id = None
+        deployer_wallet = None
+        if pair_item.deployer_address:
+            deployer_wallet = await self._get_or_create_wallet(
+                session, pair_item.deployer_address
+            )
+            deployer_wallet_id = deployer_wallet.id
+
         pair_db = PairDB(
             pair_address=pair_item.pair_address,
             signature=pair_item.signature,
             token_address=pair_item.token_address,
-            deployer_address=pair_item.deployer_address,
+            deployer_address_id=deployer_wallet_id,
             token_name=pair_item.token_name,
             token_ticker=pair_item.token_ticker,
             token_uri=pair_item.token_uri,
@@ -195,52 +239,57 @@ class AsyncDatabaseManager:
             num_sells=pair_item.num_sells,
         )
 
-        # Add dev wallet funding if present and doesn't exist
-        if pair_item.dev_wallet_funding:
-            await self._add_funding_if_not_exists(session, pair_db, pair_item)
+        # If deployer wallet exists and pair has funding data, add it to the deployer
+        if deployer_wallet and pair_item.dev_wallet_funding:
+            await self._add_funding_to_wallet_if_not_exists(
+                session, deployer_wallet, pair_item
+            )
 
         return pair_db
 
-    async def _add_funding_if_not_exists(
-        self, session: AsyncSession, pair_db: PairDB, pair_item: PairItem
+    async def _add_funding_to_wallet_if_not_exists(
+        self, session: AsyncSession, wallet: WalletAddressDB, pair_item: PairItem
     ):
         """
-        Add funding to pair only if signature doesn't already exist in database.
+        Add funding to wallet only if signature doesn't already exist in database.
 
         Args:
             session: Database session
-            pair_db: PairDB instance to add funding to
+            wallet: WalletAddressDB instance (the deployer)
             pair_item: PairItem with funding data
         """
         from sqlalchemy import select
 
-        # Check if signature already exists
+        # Check if wallet already has funding
         result = await session.execute(
-            select(DevWalletFundingDB).filter_by(
-                signature=pair_item.dev_wallet_funding.signature
-            )
+            select(DevWalletFundingDB).filter_by(wallet_address_id=wallet.id)
         )
         existing_funding = result.scalar_one_or_none()
 
         if existing_funding:
-            pair_db.dev_wallet_funding = existing_funding
             logger.debug(
-                f"Funding with signature {pair_item.dev_wallet_funding.signature} already exists, skipping"
+                f"Wallet {wallet.address[:8]}... already has funding (id={existing_funding.id})"
             )
             return
 
-        # Create new funding
+        # Get or create funding wallet address
+        funding_wallet = await self._get_or_create_wallet(
+            session, pair_item.dev_wallet_funding.funding_wallet_address
+        )
+
+        # Create new funding for this wallet
         funding_db = DevWalletFundingDB(
-            wallet_address=pair_item.dev_wallet_funding.wallet_address,
-            funding_wallet_address=pair_item.dev_wallet_funding.funding_wallet_address,
+            wallet_address_id=wallet.id,
+            funding_wallet_address_id=funding_wallet.id,
             signature=pair_item.dev_wallet_funding.signature,
             amount_sol=pair_item.dev_wallet_funding.amount_sol,
             funded_at=pair_item.dev_wallet_funding.funded_at,
-            pair_address=pair_item.pair_address,
         )
-        pair_db.dev_wallet_funding = funding_db
+        session.add(funding_db)
+        await session.flush()  # Flush to get the funding_db.id
+
         logger.debug(
-            f"Added new funding with signature {pair_item.dev_wallet_funding.signature}"
+            f"Added new funding to wallet {wallet.address[:8]}... (funding_id={funding_db.id}, signature={pair_item.dev_wallet_funding.signature[:8]}...)"
         )
 
     async def _update_pair_from_item_async(
@@ -260,7 +309,10 @@ class AsyncDatabaseManager:
         if pair_item.token_address:
             pair_db.token_address = pair_item.token_address
         if pair_item.deployer_address:
-            pair_db.deployer_address = pair_item.deployer_address
+            deployer_wallet = await self._get_or_create_wallet(
+                session, pair_item.deployer_address
+            )
+            pair_db.deployer_address_id = deployer_wallet.id
         if pair_item.token_name:
             pair_db.token_name = pair_item.token_name
         if pair_item.token_ticker:
@@ -308,9 +360,11 @@ class AsyncDatabaseManager:
         if pair_item.num_sells is not None:
             pair_db.num_sells = pair_item.num_sells
 
-        # Add dev wallet funding if present and doesn't exist
-        if pair_item.dev_wallet_funding:
-            await self._add_funding_if_not_exists(session, pair_db, pair_item)
+        # Add dev wallet funding to deployer if present
+        if pair_item.dev_wallet_funding and pair_db.deployer:
+            await self._add_funding_to_wallet_if_not_exists(
+                session, pair_db.deployer, pair_item
+            )
 
     def _update_pair_from_item(self, pair_db: PairDB, pair_item: PairItem):
         """
@@ -413,12 +467,17 @@ class AsyncDatabaseManager:
         Get all pairs that have dev wallet funding asynchronously.
 
         Returns:
-            List of PairDB instances
+            List of PairDB instances with deployers that have funding
         """
         from sqlalchemy import select
 
         async with self.get_session() as session:
-            result = await session.execute(select(PairDB).join(DevWalletFundingDB))
+            # Join: PairDB -> WalletAddressDB -> DevWalletFundingDB
+            result = await session.execute(
+                select(PairDB)
+                .join(WalletAddressDB, PairDB.deployer_address_id == WalletAddressDB.id)
+                .join(DevWalletFundingDB, DevWalletFundingDB.wallet_address_id == WalletAddressDB.id)
+            )
             return list(result.scalars().all())
 
     async def get_statistics(self) -> dict:
@@ -435,9 +494,11 @@ class AsyncDatabaseManager:
             total_result = await session.execute(select(func.count(PairDB.id)))
             total_pairs = total_result.scalar()
 
-            # Pairs with funding
+            # Pairs with funding (via deployer wallet)
             funding_result = await session.execute(
-                select(func.count(PairDB.id)).join(DevWalletFundingDB)
+                select(func.count(PairDB.id))
+                .join(WalletAddressDB, PairDB.deployer_address_id == WalletAddressDB.id)
+                .join(DevWalletFundingDB, DevWalletFundingDB.wallet_address_id == WalletAddressDB.id)
             )
             pairs_with_funding = funding_result.scalar()
 

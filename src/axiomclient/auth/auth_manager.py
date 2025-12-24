@@ -31,11 +31,8 @@ import base64
 import hashlib
 import json
 import logging
-import os
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Union
 
 # Third-party imports
 # httpx: Modern, async-capable HTTP client library (replaces requests)
@@ -44,17 +41,12 @@ import httpx
 
 # cryptography: Industry-standard encryption library
 # Used for secure token storage with Fernet symmetric encryption
-from cryptography.fernet import Fernet
 
+from axiomclient.auth.auth_storage import SecureTokenStorage
+from axiomclient.auth.auth_tokens import AuthTokens
+from axiomclient.auth.cookies_manager import CookieManager
 from axiomclient.email.otp_fetcher import OtpFetcher
 
-
-# Token expiration buffer constants (in seconds)
-# These buffers provide safety margins before actual token expiration
-TOKEN_EXPIRED_BUFFER = 300  # 5 minutes - consider token expired this early for safety
-TOKEN_REFRESH_BUFFER = (
-    900  # 15 minutes - trigger refresh this early to avoid race conditions
-)
 SALT = bytes(
     [
         217,
@@ -92,477 +84,6 @@ SALT = bytes(
     ]
 )
 ITERATIONS = 600_000
-
-
-@dataclass
-class AuthTokens:
-    """
-    # Authentication Token Container
-
-    Immutable container for storing authentication tokens with expiration tracking.
-    Uses dataclass for clean, type-safe representation of token data.
-
-    ## Attributes:
-    - `access_token` (str): JWT access token for API authentication
-    - `refresh_token` (str): Long-lived token used to obtain new access tokens
-    - `expires_at` (float): Unix timestamp when the access token expires
-    - `issued_at` (float): Unix timestamp when the tokens were issued
-
-    ## Design Decisions:
-    - Uses dataclass for automatic `__init__`, `__repr__`, and `__eq__` methods
-    - Stores timestamps as float (Unix time) for easy comparison and serialization
-    - Provides buffer times for proactive token management to prevent auth failures
-    - Immutable by design to prevent accidental token modification
-
-    ## Example:
-    ```python
-    tokens = AuthTokens(
-        access_token="eyJhbGc...",
-        refresh_token="refresh_abc123",
-        expires_at=time.time() + 3600,
-        issued_at=time.time()
-    )
-
-    if tokens.needs_refresh:
-        # Refresh tokens before they expire
-        pass
-    ```
-    """
-
-    access_token: str
-    refresh_token: str
-    expires_at: float
-    issued_at: float
-
-    @property
-    def is_expired(self) -> bool:
-        """
-        Check if the access token is expired or about to expire.
-
-        Uses a 5-minute safety buffer to consider tokens expired before their actual
-        expiration time. This prevents race conditions where a token might expire
-        during an API request.
-
-        ## Returns:
-        - `bool`: True if token is expired or will expire within 5 minutes
-
-        ## Algorithm:
-        Compares current time against (expiration_time - buffer):
-        - If current_time >= (expires_at - 300s), token is considered expired
-        - This provides a 5-minute safety margin for token renewal
-        """
-        return time.time() >= (self.expires_at - TOKEN_EXPIRED_BUFFER)
-
-    @property
-    def needs_refresh(self) -> bool:
-        """
-        Check if the token should be refreshed proactively.
-
-        Uses a 15-minute buffer to trigger refresh before expiration. This ensures
-        smooth operation without interruption from expired tokens.
-
-        ## Returns:
-        - `bool`: True if token should be refreshed within 15 minutes
-
-        ## Design Rationale:
-        - 15-minute buffer provides ample time for refresh operation to complete
-        - Prevents service disruption during long-running operations
-        - Allows for retry logic if refresh fails initially
-        """
-        return time.time() >= (self.expires_at - TOKEN_REFRESH_BUFFER)
-
-    def to_dict(self) -> Dict[str, Union[str, float]]:
-        """
-        Convert token data to dictionary for serialization.
-
-        Used for JSON serialization when storing tokens to disk or
-        transmitting them over network.
-
-        ## Returns:
-        - `dict`: Dictionary with all token fields
-        """
-        return {
-            "access_token": self.access_token,
-            "refresh_token": self.refresh_token,
-            "expires_at": self.expires_at,
-            "issued_at": self.issued_at,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, str | float]) -> "AuthTokens":
-        """
-        Create AuthTokens instance from dictionary.
-
-        Used for deserializing tokens from storage or network responses.
-
-        ## Args:
-        - `data` (dict): Dictionary containing token fields
-
-        ## Returns:
-        - `AuthTokens`: New instance with data from dictionary
-
-        ## Raises:
-        - `KeyError`: If required fields are missing from dictionary
-        - `TypeError`: If field types don't match expected types
-        """
-        return cls(
-            access_token=str(data["access_token"]),
-            refresh_token=str(data["refresh_token"]),
-            expires_at=float(data["expires_at"]),
-            issued_at=float(data["issued_at"]),
-        )
-
-
-# File permission constants for secure storage
-# 0o700 = Owner has read/write/execute, others have no access
-DIR_PERMISSIONS = 0o700
-# 0o600 = Owner has read/write, others have no access
-FILE_PERMISSIONS = 0o600
-
-
-class SecureTokenStorage:
-    """
-    # Secure Token Storage Manager
-
-    Handles encrypted storage and retrieval of authentication tokens using
-    Fernet symmetric encryption (AES-128 in CBC mode with HMAC authentication).
-
-    ## Security Features:
-    - **Encryption**: Uses Fernet (symmetric encryption) to protect tokens at rest
-    - **File Permissions**: Restricts access to storage directory and files (Unix only)
-    - **Key Management**: Generates and securely stores encryption keys
-    - **Automatic Key Generation**: Creates encryption key on first use
-
-    ## Storage Structure:
-    ```
-    ~/.axiomtradeapi/          # Storage directory (mode 0o700)
-    ├── key.enc                # Encryption key (mode 0o600)
-    └── tokens.enc             # Encrypted token data (mode 0o600)
-    ```
-
-    ## Design Decisions:
-    - Uses Fernet for simplicity and security (authenticated encryption)
-    - Stores encryption key separately from encrypted data
-    - Uses restrictive file permissions to prevent unauthorized access
-    - JSON serialization for structured token storage
-
-    ## Example:
-    ```python
-    storage = SecureTokenStorage()
-
-    # Save tokens
-    tokens = AuthTokens(...)
-    storage.save_tokens(tokens)
-
-    # Load tokens later
-    loaded_tokens = storage.load_tokens()
-    ```
-    """
-
-    def __init__(self, storage_dir: Optional[str] = None) -> None:
-        """
-        Initialize secure token storage.
-
-        Creates storage directory if it doesn't exist and sets up encryption.
-
-        ## Args:
-        - `storage_dir` (str, optional): Custom directory for token storage.
-          Defaults to `~/.axiomtradeapi` if not specified.
-
-        ## Side Effects:
-        - Creates storage directory with restrictive permissions
-        - Generates encryption key if it doesn't exist
-        - Initializes Fernet cipher suite for encryption/decryption
-        """
-        # Determine storage directory: use provided path or default to home directory
-        self.storage_dir = Path(storage_dir or Path.home() / ".axiomtradeapi")
-
-        # Create directory with restrictive permissions (owner only)
-        self.storage_dir.mkdir(exist_ok=True, mode=DIR_PERMISSIONS)
-
-        # Define file paths for encrypted tokens and encryption key
-        self.token_file = self.storage_dir / "tokens.enc"
-        self.key_file = self.storage_dir / "key.enc"
-
-        # Set up logging for debugging and security auditing
-        self.logger = logging.getLogger(__name__)
-
-        # Initialize or load encryption key
-        self._initialize_encryption_key()
-
-    def _initialize_encryption_key(self) -> None:
-        """
-        Initialize or load the encryption key for token storage.
-
-        ## Algorithm:
-        1. Check if encryption key file exists
-        2. If exists: Load existing key from file
-        3. If not exists: Generate new Fernet key and save it
-        4. Set restrictive file permissions on key file
-        5. Initialize Fernet cipher suite with the key
-
-        ## Security Note:
-        - Fernet key is 32 URL-safe base64-encoded bytes
-        - Key file permissions are set to 0o600 (owner read/write only)
-        - Losing the key means losing access to all encrypted tokens
-        """
-        if self.key_file.exists():
-            # Load existing encryption key
-            with open(self.key_file, "rb") as f:
-                self.key = f.read()
-        else:
-            # Generate new encryption key
-            self.key = Fernet.generate_key()
-
-            # Save key to file
-            with open(self.key_file, "wb") as f:
-                f.write(self.key)
-
-            # Set restrictive permissions (Unix only - no effect on Windows)
-            os.chmod(self.key_file, FILE_PERMISSIONS)
-
-        # Initialize Fernet cipher suite for encryption/decryption operations
-        self.cipher_suite = Fernet(self.key)
-
-    def save_tokens(self, tokens: AuthTokens) -> bool:
-        """
-        Securely encrypt and save authentication tokens to disk.
-
-        ## Process:
-        1. Serialize tokens to JSON
-        2. Encrypt JSON data using Fernet
-        3. Write encrypted data to file
-        4. Set restrictive file permissions
-
-        ## Args:
-        - `tokens` (AuthTokens): Token object to save
-
-        ## Returns:
-        - `bool`: True if save successful, False if error occurred
-
-        ## Error Handling:
-        - Catches and logs all exceptions during save operation
-        - Returns False on failure without raising exceptions
-        - Safe to call repeatedly without side effects on failure
-        """
-        try:
-            # Serialize tokens to JSON bytes
-            token_data = json.dumps(tokens.to_dict()).encode("utf-8")
-
-            # Encrypt the JSON data using Fernet (AES + HMAC)
-            encrypted_data = self.cipher_suite.encrypt(token_data)
-
-            # Write encrypted data to file atomically
-            with open(self.token_file, "wb") as f:
-                f.write(encrypted_data)
-
-            # Set restrictive permissions on token file
-            os.chmod(self.token_file, FILE_PERMISSIONS)
-
-            self.logger.debug("Tokens saved securely to encrypted storage")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to save tokens: {e}", exc_info=True)
-            return False
-
-    def load_tokens(self) -> Optional[AuthTokens]:
-        """
-        Load and decrypt authentication tokens from disk.
-
-        ## Process:
-        1. Check if token file exists
-        2. Read encrypted data from file
-        3. Decrypt data using Fernet
-        4. Parse JSON and create AuthTokens object
-
-        ## Returns:
-        - `AuthTokens`: Loaded tokens if successful
-        - `None`: If no tokens exist or decryption fails
-
-        ## Error Handling:
-        - Returns None if token file doesn't exist
-        - Catches decryption errors (corrupted data or wrong key)
-        - Catches JSON parsing errors
-        - Logs all errors for debugging
-        """
-        # Return None if no saved tokens exist
-        if not self.token_file.exists():
-            self.logger.debug("No saved tokens found in storage")
-            return None
-
-        try:
-            # Read encrypted data from file
-            with open(self.token_file, "rb") as f:
-                encrypted_data = f.read()
-
-            # Decrypt using Fernet (validates HMAC, then decrypts)
-            decrypted_data = self.cipher_suite.decrypt(encrypted_data)
-
-            # Parse JSON from decrypted bytes
-            token_data = json.loads(decrypted_data.decode("utf-8"))
-
-            # Create AuthTokens object from dictionary
-            tokens = AuthTokens.from_dict(token_data)
-
-            self.logger.debug("Tokens loaded successfully from encrypted storage")
-            return tokens
-
-        except Exception as e:
-            self.logger.error(f"Failed to load tokens: {e}", exc_info=True)
-            return None
-
-    def delete_tokens(self) -> bool:
-        """
-        Delete saved tokens from disk.
-
-        Used during logout or when clearing authentication state.
-
-        ## Returns:
-        - `bool`: True if deletion successful or file doesn't exist, False on error
-
-        ## Side Effects:
-        - Removes encrypted token file from disk
-        - Does not remove encryption key (allows future token storage)
-        """
-        try:
-            if self.token_file.exists():
-                self.token_file.unlink()
-                self.logger.debug("Saved tokens deleted from storage")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to delete tokens: {e}", exc_info=True)
-            return False
-
-    def has_saved_tokens(self) -> bool:
-        """
-        Check if saved tokens exist in storage.
-
-        ## Returns:
-        - `bool`: True if encrypted token file exists, False otherwise
-
-        ## Note:
-        Does not verify if tokens are valid or decryptable, only checks file existence.
-        """
-        return self.token_file.exists()
-
-
-class CookieManager:
-    """
-    # HTTP Cookie Manager
-
-    Manages HTTP cookies for authenticated API requests. Provides a simple
-    interface for setting, formatting, and clearing authentication cookies.
-
-    ## Responsibilities:
-    - Store authentication cookies (access token, refresh token)
-    - Format cookies for HTTP Cookie header
-    - Clear cookies on logout
-
-    ## Cookie Format:
-    Cookies are formatted as: `name1=value1; name2=value2; name3=value3`
-
-    ## Design Decisions:
-    - Uses simple dict storage (no complex cookie jar needed)
-    - Focuses specifically on auth cookies (not general-purpose)
-    - Thread-safe for basic operations (dict operations are atomic in CPython)
-
-    ## Example:
-    ```python
-    cookie_mgr = CookieManager()
-    cookie_mgr.set_auth_cookies("access_token_value", "refresh_token_value")
-
-    # Get formatted cookie string for HTTP header
-    cookie_header = cookie_mgr.get_cookie_header()
-    # Returns: "auth-access-token=access_token_value; auth-refresh-token=refresh_token_value"
-    ```
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize cookie manager with empty cookie store.
-
-        ## Side Effects:
-        - Creates empty dictionary for cookie storage
-        - Initializes logger for debugging
-        """
-        self.cookies: Dict[str, str] = {}
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
-
-    def set_auth_cookies(self, auth_token: str, refresh_token: str) -> None:
-        """
-        Set authentication cookies for API requests.
-
-        Updates the internal cookie store with authentication tokens.
-        These cookies are required for authenticated API requests to Axiom Trade.
-
-        ## Args:
-        - `auth_token` (str): Access token (JWT) for API authentication
-        - `refresh_token` (str): Refresh token for obtaining new access tokens
-
-        ## Cookie Names:
-        - `auth-access-token`: The active JWT access token
-        - `auth-refresh-token`: Long-lived refresh token
-        """
-        self.cookies["auth-access-token"] = auth_token
-        self.cookies["auth-refresh-token"] = refresh_token
-        self.logger.debug("Authentication cookies updated in cookie manager")
-
-    def get_cookie_header(self) -> str:
-        """
-        Format cookies as HTTP Cookie header string.
-
-        Converts the internal cookie dictionary into a properly formatted
-        Cookie header value according to RFC 6265.
-
-        ## Returns:
-        - `str`: Formatted cookie string (e.g., "name1=value1; name2=value2")
-          Returns empty string if no cookies are set
-
-        ## Format:
-        Cookies are joined with "; " separator as per HTTP Cookie spec.
-        Order is not guaranteed (dict iteration order in Python 3.7+).
-        """
-        if not self.cookies:
-            return ""
-
-        # Format: "name1=value1; name2=value2"
-        cookie_pairs = [f"{key}={value}" for key, value in self.cookies.items()]
-        return "; ".join(cookie_pairs)
-
-    def clear_auth_cookies(self) -> None:
-        """
-        Clear authentication cookies from storage.
-
-        Removes auth tokens from cookie store. Used during logout
-        or when invalidating the current session.
-
-        ## Side Effects:
-        - Removes 'auth-access-token' from cookies
-        - Removes 'auth-refresh-token' from cookies
-        - Safe to call even if cookies don't exist (no KeyError)
-        """
-        self.cookies.pop("auth-access-token", None)
-        self.cookies.pop("auth-refresh-token", None)
-        self.logger.debug("Authentication cookies cleared from cookie manager")
-
-    def has_auth_cookies(self) -> bool:
-        """
-        Check if authentication cookies are present.
-
-        Verifies that both required auth cookies exist in storage.
-
-        ## Returns:
-        - `bool`: True if both access and refresh tokens are present, False otherwise
-
-        ## Note:
-        Does not validate token content or expiration, only checks presence.
-        """
-        return (
-            "auth-access-token" in self.cookies and "auth-refresh-token" in self.cookies
-        )
 
 
 # Default token expiration time (1 hour in seconds)
@@ -626,11 +147,11 @@ class AuthManager:
 
     def __init__(
         self,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        auth_token: Optional[str] = None,
-        refresh_token: Optional[str] = None,
-        storage_dir: Optional[str] = None,
+        username: str | None = None,
+        password: str | None = None,
+        auth_token: str | None = None,
+        refresh_token: str | None = None,
+        storage_dir: str | None = None,
         use_saved_tokens: bool = True,
     ) -> None:
         """
@@ -676,7 +197,7 @@ class AuthManager:
         self.token_storage = SecureTokenStorage(storage_dir)
 
         # Token storage - initially None until authenticated
-        self.tokens: Optional[AuthTokens] = None
+        self.tokens: AuthTokens | None = None
 
         # print(f"AuthManager initialized. use_saved_tokens={use_saved_tokens}")
         # Load saved tokens if enabled and available
@@ -886,7 +407,7 @@ class AuthManager:
             self.logger.error(f"Authentication error: {e}", exc_info=True)
             return False
 
-    def _authenticate_step1_get_otp(self, b64_password: str) -> Optional[str]:
+    def _authenticate_step1_get_otp(self, b64_password: str) -> str | None:
         """
         First step of authentication: send credentials to receive OTP token.
 
@@ -1296,8 +817,8 @@ class AuthManager:
         return False
 
     def get_authenticated_headers(
-        self, additional_headers: Optional[Dict[str, str]] = None
-    ) -> Dict[str, str]:
+        self, additional_headers: dict[str, str] | None = None
+    ) -> dict[str, str]:
         """
         Generate HTTP headers with authentication cookies for API requests.
 
@@ -1476,7 +997,7 @@ class AuthManager:
             ),
         }
 
-    def get_tokens(self) -> Optional[AuthTokens]:
+    def get_tokens(self) -> AuthTokens | None:
         """
         Get the current authentication tokens object.
 
@@ -1555,11 +1076,11 @@ class AuthManager:
 
 # Convenience function for quick session creation
 def create_authenticated_session(
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-    auth_token: Optional[str] = None,
-    refresh_token: Optional[str] = None,
-    storage_dir: Optional[str] = None,
+    username: str | None = None,
+    password: str | None = None,
+    auth_token: str | None = None,
+    refresh_token: str | None = None,
+    storage_dir: str | None = None,
     use_saved_tokens: bool = True,
 ) -> AuthManager:
     """

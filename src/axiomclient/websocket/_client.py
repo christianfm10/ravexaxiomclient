@@ -129,7 +129,7 @@ import json
 import logging
 import os
 import msgpack
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 # Third-party imports
 # aiogram: Telegram bot library for sending notifications
@@ -148,8 +148,10 @@ if typing.TYPE_CHECKING:
 # WebSocket server URLs (cluster endpoints)
 # Using cluster3 as primary - cluster-usc2 is alternative/backup
 WS_PRIMARY_URL = "wss://cluster3.axiom.trade/"
+# WS_PRIMARY_URL = "ws://localhost:8765"
 WS_BACKUP_URL = "wss://cluster-usc2.axiom.trade/"
 WS_PULSE_URL = "wss://pulse2.axiom.trade/ws"
+# WS_PULSE_URL = "ws://localhost:8766"
 
 # Room/channel names for WebSocket subscriptions
 ROOM_NEW_PAIRS = "new_pairs"
@@ -584,7 +586,7 @@ class AxiomWebSocketClient:
         return headers
 
     async def subscribe_new_tokens(
-        self, callback: Callable[[Dict[str, Any]], None]
+        self, callback: Callable[[Dict[str, Any]], Awaitable[None]]
     ) -> bool:
         """
         Subscribe to new token listing notifications.
@@ -808,7 +810,7 @@ class AxiomWebSocketClient:
 
     async def subscribe_pulse(
         self,
-        callback: Callable[[Dict[str, Any]], None],
+        callback: Callable[[list[Any]], Awaitable[None]],
         user_state: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """

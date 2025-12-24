@@ -1,10 +1,7 @@
 import imaplib
 import socket
 import ssl
-from typing import Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing_extensions import Buffer
+from typing import Optional
 
 
 def wrap_socket(
@@ -17,7 +14,9 @@ def wrap_socket(
 
 
 class IMAP4_TLS(imaplib.IMAP4):
-    """IMAP4 client class for TLS/SSL connections.
+    """
+    Override to support Python 3.14
+    IMAP4 client class for TLS/SSL connections.
 
     Adapted from imaplib.IMAP4_SSL.
     """

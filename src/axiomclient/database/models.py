@@ -18,14 +18,60 @@ from sqlalchemy.dialects.postgresql import JSONB
 Base = declarative_base()
 
 
+class WalletAddressDB(Base):
+    """Wallet address information with aggregated token metrics."""
+
+    __tablename__ = "wallet_addresses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    address = Column(String, nullable=False, unique=True, index=True)
+    migrated_tokens = Column(Integer, nullable=True, default=0)
+    dev_tokens = Column(Integer, nullable=True, default=0)
+
+    # Timestamps
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    deployed_pairs = relationship(
+        "PairDB", foreign_keys="[PairDB.deployer_address_id]", back_populates="deployer"
+    )
+    # Una wallet solo puede tener UN funding (su primera transacción SOL)
+    received_funding = relationship(
+        "DevWalletFundingDB",
+        foreign_keys="[DevWalletFundingDB.wallet_address_id]",
+        back_populates="wallet",
+        uselist=False,  # Solo un funding por wallet
+    )
+    # Una wallet puede haber enviado funding a MUCHAS wallets
+    sent_fundings = relationship(
+        "DevWalletFundingDB",
+        foreign_keys="[DevWalletFundingDB.funding_wallet_address_id]",
+        back_populates="funding_wallet",
+    )
+
+    def __repr__(self):
+        return f"<WalletAddressDB(address={self.address}, migrated={self.migrated_tokens}, dev={self.dev_tokens})>"
+
+
 class DevWalletFundingDB(Base):
     """Dev wallet funding information."""
 
     __tablename__ = "dev_wallet_funding"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    wallet_address = Column(String, nullable=False)
-    funding_wallet_address = Column(String, nullable=False)
+    wallet_address_id = Column(
+        Integer,
+        ForeignKey("wallet_addresses.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )  # Unique - una wallet solo puede tener un funding
+    funding_wallet_address_id = Column(
+        Integer, ForeignKey("wallet_addresses.id"), nullable=False, index=True
+    )
     signature = Column(
         String, nullable=False, unique=True, index=True
     )  # Unique - signature único
@@ -33,14 +79,28 @@ class DevWalletFundingDB(Base):
     funded_at = Column(String, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
-    # Relationship back to pair
-    pair_address = Column(String, ForeignKey("pairs.pair_address"), nullable=False)
+    # Relationships to wallet addresses
+    wallet = relationship(
+        "WalletAddressDB",
+        foreign_keys=[wallet_address_id],
+        back_populates="received_funding",
+    )
+    funding_wallet = relationship(
+        "WalletAddressDB",
+        foreign_keys=[funding_wallet_address_id],
+        back_populates="sent_fundings",
+    )
 
     __table_args__ = (
-        Index("idx_wallet_address", "wallet_address"),
-        Index("idx_funding_wallet_address", "funding_wallet_address"),
-        Index("idx_pair_signature", "pair_address", "signature"),  # Índice compuesto
+        Index("idx_wallet_address_id", "wallet_address_id"),
+        Index("idx_funding_wallet_address_id", "funding_wallet_address_id"),
     )
+
+    def __repr__(self):
+        return (
+            f"<DevWalletFundingDB(id={self.id}, "
+            f"signature={self.signature[:8]}..., amount={self.amount_sol} SOL)>"
+        )
 
 
 class PairDB(Base):
@@ -52,7 +112,9 @@ class PairDB(Base):
     pair_address = Column(String, nullable=False, unique=True, index=True)
     signature = Column(String, nullable=True)
     token_address = Column(String, nullable=True, index=True)
-    deployer_address = Column(String, nullable=True, index=True)
+    deployer_address_id = Column(
+        Integer, ForeignKey("wallet_addresses.id"), nullable=True
+    )
     token_name = Column(String, nullable=True)
     token_ticker = Column(String, nullable=True)
     token_uri = Column(String, nullable=True)
@@ -84,15 +146,14 @@ class PairDB(Base):
     )
 
     # Relationships
-    dev_wallet_funding = relationship(
-        "DevWalletFundingDB",
-        backref="pair",
-        uselist=False,
-        cascade="all, delete-orphan",
+    deployer = relationship(
+        "WalletAddressDB",
+        foreign_keys=[deployer_address_id],
+        back_populates="deployed_pairs",
     )
 
     __table_args__ = (
-        Index("idx_protocol_created_at", "protocol", "created_at"),
+        Index("idx_deployer_address_id", "deployer_address_id"),
         Index("idx_market_cap", "market_cap_sol"),
     )
 

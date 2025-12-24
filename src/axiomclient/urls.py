@@ -13,11 +13,11 @@ class AAllBaseUrls:
 
 
 class AxiomTradeApiUrls:
-    LOGIN_STEP1 = f"/login-password-v2"
-    LOGIN_STEP2 = f"/login-otp"
-    LOGOUT = f"/auth/logout"
-    REFRESH_TOKEN = f"/refresh-access-token"
-    USER_INFO = f"/user/info"
-    SUBSCRIBE_NEW_TOKENS = f"/ws/subscribe/new-tokens"
-    SUBSCRIBE_ORDERS = f"/ws/subscribe/orders"
-    SUBSCRIBE_POSITIONS = f"/ws/subscribe/positions"
+    LOGIN_STEP1 = "/login-password-v2"
+    LOGIN_STEP2 = "/login-otp"
+    LOGOUT = "/auth/logout"
+    REFRESH_TOKEN = "/refresh-access-token"
+    USER_INFO = "/user/info"
+    SUBSCRIBE_NEW_TOKENS = "/ws/subscribe/new-tokens"
+    SUBSCRIBE_ORDERS = "/ws/subscribe/orders"
+    SUBSCRIBE_POSITIONS = "/ws/subscribe/positions"

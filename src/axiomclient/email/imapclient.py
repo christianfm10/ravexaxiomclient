@@ -7,6 +7,7 @@ from axiomclient.email import tls
 
 
 class CustomIMAPClient(IMAPClient):
+    # Override to support Python 3.14
     def _create_IMAP4(self):  # type: ignore
         if self.stream:
             return imaplib.IMAP4_stream(self.host)

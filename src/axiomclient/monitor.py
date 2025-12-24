@@ -94,7 +94,7 @@ FIELD_MAP = {
 CLEANUP_INTERVAL_SECONDS = 5
 BATCH_SIZE = 1000
 MAX_DEV_TOKENS_THRESHOLD = 20  # Pairs with more dev tokens are ignored
-PAIR_AGE_THRESHOLD_MINUTES = 1  # How old before persisting to DB
+PAIR_AGE_THRESHOLD_MINUTES = 20  # How old before persisting to DB
 
 
 # ============================================================================
@@ -131,8 +131,9 @@ def is_timestamp_older_than(
 
         if seconds is not None:
             return now - dt > timedelta(seconds=seconds)
-        else:
+        elif minutes is not None:
             return now - dt > timedelta(minutes=minutes)
+        return False
 
     except (ValueError, AttributeError) as e:
         logger.error(f"Failed to parse timestamp '{timestamp}': {e}")
@@ -227,7 +228,7 @@ def is_pair_ready_for_persistence(pair_item: PairItem) -> bool:
         return False
 
     return is_timestamp_older_than(
-        pair_item.created_at, minutes=PAIR_AGE_THRESHOLD_MINUTES
+        pair_item.created_at, seconds=PAIR_AGE_THRESHOLD_MINUTES
     )
 
 
@@ -344,6 +345,8 @@ def should_accept_new_token(content: Dict[str, Any]) -> bool:
     protocol_details = content.get("protocol_details", {})
     if protocol_details and protocol_details.get("isMayhem", False):
         return False
+    if protocol_details and protocol_details.get("isOffchain", False):
+        return False
 
     return True
 
@@ -395,11 +398,11 @@ async def handle_new_token_message(message: Dict[str, Any]) -> None:
         # Store in memory
         pair_state[pair_address] = pair_item
 
-        # logger.info(
-        #     f"New token tracked: {pair_address} | "
-        #     f"Name: {pair_item.token_name} | "
-        #     f"Ticker: {pair_item.token_ticker}"
-        # )
+        logger.info(
+            f"New token tracked: {pair_address} | "
+            f"Name: {pair_item.token_name} | "
+            f"Ticker: {pair_item.token_ticker}"
+        )
 
     except Exception as e:
         logger.error(f"Failed to handle new token message: {e}", exc_info=True)
