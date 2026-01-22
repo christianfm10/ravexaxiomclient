@@ -63,7 +63,7 @@ async def run_websocket_monitoring() -> None:
     # Subscribe to data streams
     await ws_client.subscribe_new_tokens(handle_new_token_message)
     await ws_client.subscribe_pulse(dispatch_pulse_message)
-    await ws_client.subscribe_sol_price(handle_sol_price_message)
+    # await ws_client.subscribe_sol_price(handle_sol_price_message)
 
     logger.info("WebSocket subscriptions configured")
     logger.info("Starting message handlers...")

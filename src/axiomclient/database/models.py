@@ -26,8 +26,8 @@ class WalletAddressDB(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     address = Column(String, nullable=False, unique=True, index=True)
-    migrated_tokens = Column(Integer, nullable=True, default=0)
-    dev_tokens = Column(Integer, nullable=True, default=0)
+    migrated_tokens: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
+    dev_tokens: Mapped[int] = mapped_column(Integer, nullable=True, default=0)
 
     # Timestamps
     created_at = Column(DateTime, default=func.now(), nullable=False)
@@ -128,9 +128,7 @@ class PairDB(Base):
     initial_liquidity_token = Column(Float, nullable=True)
     supply = Column(Float, nullable=True)
     bonding_curve_percent = Column(Float, nullable=True)
-    migrated_tokens = Column(Integer, nullable=True)
     created_at = Column(String, nullable=True)
-    dev_tokens = Column(Integer, nullable=True)
     num_txn = Column(Integer, nullable=True)
     num_buys = Column(Integer, nullable=True)
     num_sells = Column(Integer, nullable=True)

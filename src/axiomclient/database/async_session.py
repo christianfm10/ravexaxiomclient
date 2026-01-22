@@ -191,6 +191,28 @@ class AsyncDatabaseManager:
         await session.flush()  # Flush to get the ID
         return wallet
 
+    async def _update_wallet_token_counts(
+        self, wallet: WalletAddressDB, pair_item: PairItem
+    ) -> None:
+        """
+        Update wallet's token counts (dev_tokens and migrated_tokens).
+
+        Args:
+            wallet: WalletAddressDB instance to update
+            pair_item: PairItem with token count data
+        """
+        # Update dev_tokens - sum across all pairs from this wallet
+        if pair_item.dev_tokens is not None:
+            wallet.dev_tokens = pair_item.dev_tokens
+        else:
+            wallet.dev_tokens = 1
+
+        # Update migrated_tokens - sum across all pairs from this wallet
+        if pair_item.migrated_tokens is not None:
+            wallet.migrated_tokens = pair_item.migrated_tokens
+        else:
+            wallet.migrated_tokens = 0
+
     async def _create_pair_from_item_async(
         self, session: AsyncSession, pair_item: PairItem
     ) -> PairDB:
@@ -230,15 +252,15 @@ class AsyncDatabaseManager:
             initial_liquidity_token=pair_item.initial_liquidity_token,
             supply=pair_item.supply,
             bonding_curve_percent=pair_item.bonding_curve_percent,
-            migrated_tokens=pair_item.migrated_tokens
-            if pair_item.migrated_tokens is not None
-            else 0,
             created_at=pair_item.created_at,
-            dev_tokens=pair_item.dev_tokens if pair_item.dev_tokens is not None else 1,
             num_txn=pair_item.num_txn,
             num_buys=pair_item.num_buys,
             num_sells=pair_item.num_sells,
         )
+
+        # Update wallet token counts if deployer exists
+        if deployer_wallet:
+            await self._update_wallet_token_counts(deployer_wallet, pair_item)
 
         # If deployer wallet exists and pair has funding data, add it to the deployer
         if deployer_wallet and pair_item.dev_wallet_funding:
@@ -336,8 +358,6 @@ class AsyncDatabaseManager:
             "initial_liquidity_token",
             "supply",
             "bonding_curve_percent",
-            "migrated_tokens",
-            "dev_tokens",
             "num_txn",
             "num_buys",
             "num_sells",
@@ -347,6 +367,10 @@ class AsyncDatabaseManager:
             value = getattr(pair_item, field, None)
             if value is not None:
                 setattr(pair_db, field, value)
+
+        # Update wallet token counts if deployer exists
+        if pair_db.deployer:
+            await self._update_wallet_token_counts(pair_db.deployer, pair_item)
 
         # Special case: first_market_cap_sol - only set once
         if (
@@ -400,8 +424,6 @@ class AsyncDatabaseManager:
             "initial_liquidity_token",
             "supply",
             "bonding_curve_percent",
-            "migrated_tokens",
-            "dev_tokens",
             "num_txn",
             "num_buys",
             "num_sells",
@@ -411,6 +433,9 @@ class AsyncDatabaseManager:
             value = getattr(pair_item, field, None)
             if value is not None:
                 setattr(pair_db, field, value)
+
+        # Note: dev_tokens and migrated_tokens are now stored in WalletAddressDB
+        # They should be updated through the async version of this method
 
         # Special case: first_market_cap_sol - only set once
         if (
