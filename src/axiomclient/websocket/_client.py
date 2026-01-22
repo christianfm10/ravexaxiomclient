@@ -139,10 +139,10 @@ from aiogram import Bot
 # Provides async/await support for WebSocket connections with excellent performance
 import websockets
 
-import typing
+# import typing
 
-if typing.TYPE_CHECKING:
-    from axiomclient.auth.auth_manager import AuthManager
+# if typing.TYPE_CHECKING:
+from axiomclient.auth.auth_manager import AuthManager
 
 
 # WebSocket server URLs (cluster endpoints)
@@ -653,7 +653,7 @@ class AxiomWebSocketClient:
             return False
 
     async def subscribe_token_mcap(
-        self, token_address: str, callback: Callable[[Dict[str, Any]], None]
+        self, token_address: str, callback: Callable[[Dict[str, Any]], Awaitable[None]]
     ) -> bool:
         """
         Subscribe to market cap updates for a specific token.
@@ -788,7 +788,7 @@ class AxiomWebSocketClient:
             return False
 
     async def subscribe_sol_price(
-        self, callback: Callable[[Dict[str, Any]], None]
+        self, callback: Callable[[Dict[str, Any]], Awaitable[None]]
     ) -> bool:
         # Ensure connection is established
         if not self.ws:

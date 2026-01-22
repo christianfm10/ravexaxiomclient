@@ -10,6 +10,7 @@ from axiomclient.websocket._client import AxiomWebSocketClient
 from axiomclient.monitor.message_handlers import (
     handle_new_token_message,
     dispatch_pulse_message,
+    handle_sol_price_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,11 @@ async def run_websocket_monitoring() -> None:
     Other exceptions propagate up to main() for handling.
     """
     # Authenticate with Axiom Trade
-    auth_manager = AuthManager(use_saved_tokens=True)
+    auth_manager = AuthManager(
+        # username="christianmfm10@inbox.lv",
+        # password="hirozilar10",
+        use_saved_tokens=True,
+    )
 
     if not auth_manager.is_authenticated():
         logger.info("Authenticating with Axiom Trade...")
@@ -58,6 +63,7 @@ async def run_websocket_monitoring() -> None:
     # Subscribe to data streams
     await ws_client.subscribe_new_tokens(handle_new_token_message)
     await ws_client.subscribe_pulse(dispatch_pulse_message)
+    await ws_client.subscribe_sol_price(handle_sol_price_message)
 
     logger.info("WebSocket subscriptions configured")
     logger.info("Starting message handlers...")

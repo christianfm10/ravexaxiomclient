@@ -1082,7 +1082,7 @@ def create_authenticated_session(
     refresh_token: str | None = None,
     storage_dir: str | None = None,
     use_saved_tokens: bool = True,
-) -> AuthManager:
+) -> "AuthManager":
     """
     # Create Authenticated Session
 

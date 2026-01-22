@@ -373,3 +373,31 @@ async def dispatch_pulse_message(message: List[Any]) -> None:
 
     except Exception as e:
         logger.error(f"Failed to dispatch pulse message: {e}", exc_info=True)
+
+
+async def handle_sol_price_message(message: Dict[str, Any]) -> None:
+    """
+    Handle incoming SOL price update messages from WebSocket.
+
+    ## Parameters
+    - `message`: WebSocket message containing SOL price data
+
+    ## Processing Steps
+    1. Extract SOL price from message content
+    2. Update global state or notify interested components
+
+    ## Error Handling
+    Catches all exceptions to prevent one bad message from crashing
+    the entire monitoring system. Logs errors with full traceback.
+    """
+    try:
+        sol_price = message.get("content", 0.0)
+
+        if sol_price is not None:
+            # Here we would update global state or notify components
+            logger.info(f"Received SOL price update: ${sol_price:.2f}")
+        else:
+            logger.warning("SOL price not found in message content")
+
+    except Exception as e:
+        logger.error(f"Failed to handle SOL price message: {e}", exc_info=True)
