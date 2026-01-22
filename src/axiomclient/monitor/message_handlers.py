@@ -109,7 +109,7 @@ async def handle_new_token_message(message: Dict[str, Any]) -> None:
         # Store in memory
         pair_state[pair_address] = pair_item
 
-        logger.info(
+        logger.debug(
             f"New token tracked: {pair_address} | "
             f"Name: {pair_item.token_name} | "
             f"Ticker: {pair_item.token_ticker}"

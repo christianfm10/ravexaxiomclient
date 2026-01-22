@@ -26,7 +26,7 @@ FIELD_MAP = {
 }
 
 # Configuration constants
-CLEANUP_INTERVAL_SECONDS = 5
+CLEANUP_INTERVAL_SECONDS = 20
 BATCH_SIZE = 1000
 MAX_DEV_TOKENS_THRESHOLD = 20  # Pairs with more dev tokens are ignored
-PAIR_AGE_THRESHOLD_SECONDS = 20  # How old before persisting to DB
+PAIR_AGE_THRESHOLD_SECONDS = 300  # How old before persisting to DB
