@@ -105,7 +105,7 @@ class AuthTokens:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, str | float]) -> AuthTokens:
+    def from_dict(cls, data: dict[str, str | float]) -> "AuthTokens":
         """
         Create AuthTokens instance from dictionary.
 
