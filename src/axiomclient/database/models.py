@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     Integer,
     DateTime,
+    Date,
     ForeignKey,
     Index,
     func,
@@ -162,3 +163,24 @@ class PairDB(Base):
             f"<PairDB(pair_address={self.pair_address}, "
             f"token_name={self.token_name}, protocol={self.protocol})>"
         )
+
+
+class SolanaPriceDB(Base):
+    """Solana price information by date."""
+
+    __tablename__ = "solana_prices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, unique=True, index=True)
+    price_usd: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("idx_date", "date"),)
+
+    def __repr__(self):
+        return f"<SolanaPriceDB(date={self.date}, price_usd={self.price_usd})>"

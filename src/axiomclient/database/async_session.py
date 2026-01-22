@@ -14,6 +14,7 @@ from axiomclient.database.models import (
     PairDB,
     DevWalletFundingDB,
     WalletAddressDB,
+    SolanaPriceDB,
 )
 from axiomclient.models import DevWalletFunding, PairItem
 
@@ -519,6 +520,149 @@ class AsyncDatabaseManager:
                 "funding_percentage": (
                     (pairs_with_funding / total_pairs * 100) if total_pairs > 0 else 0
                 ),
+            }
+
+    async def save_solana_prices(self, prices: dict[str, float]) -> int:
+        """
+        Save or update Solana prices to the database.
+
+        Args:
+            prices: Dictionary with date strings (YYYY-MM-DD) as keys and prices as values
+
+        Returns:
+            Number of prices saved/updated
+        """
+        if not prices:
+            return 0
+
+        saved_count = 0
+        from sqlalchemy import select
+        from datetime import datetime
+
+        async with self.get_session() as session:
+            for date_str, price in prices.items():
+                try:
+                    # Convert string to date object
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+
+                    # Check if price for this date already exists
+                    result = await session.execute(
+                        select(SolanaPriceDB).filter_by(date=date_obj)
+                    )
+                    existing_price = result.scalar_one_or_none()
+
+                    if existing_price:
+                        # Update existing price
+                        existing_price.price_usd = price
+                        logger.debug(f"Updated price for {date_str}: ${price}")
+                    else:
+                        # Create new price entry
+                        price_db = SolanaPriceDB(date=date_obj, price_usd=price)
+                        session.add(price_db)
+                        logger.debug(f"Created price for {date_str}: ${price}")
+
+                    saved_count += 1
+
+                except Exception as e:
+                    logger.error(
+                        f"Error saving price for {date_str}: {e}", exc_info=True
+                    )
+                    continue
+
+            # Commit all changes
+            await session.commit()
+
+        logger.info(f"Saved {saved_count}/{len(prices)} prices to database")
+        return saved_count
+
+    async def get_all_solana_prices(self) -> dict[str, float]:
+        """
+        Get all Solana prices from the database.
+
+        Returns:
+            Dictionary with date strings as keys and prices as values
+        """
+        from sqlalchemy import select
+
+        async with self.get_session() as session:
+            result = await session.execute(select(SolanaPriceDB))
+            prices = result.scalars().all()
+            return {
+                price.date.strftime("%Y-%m-%d"): price.price_usd for price in prices
+            }
+
+    async def get_last_solana_price_date(self) -> Optional[str]:
+        """
+        Get the most recent date with a Solana price entry.
+
+        Returns:
+            Date string (YYYY-MM-DD) or None if no prices exist
+        """
+        from sqlalchemy import select
+
+        async with self.get_session() as session:
+            result = await session.execute(
+                select(SolanaPriceDB).order_by(SolanaPriceDB.date.desc()).limit(1)
+            )
+            price = result.scalar_one_or_none()
+            return price.date.strftime("%Y-%m-%d") if price else None
+
+    async def get_solana_price_stats(self) -> dict:
+        """
+        Get statistics about Solana prices in the database.
+
+        Returns:
+            Dictionary with price statistics
+        """
+        from sqlalchemy import select, func
+
+        async with self.get_session() as session:
+            # Total count
+            count_result = await session.execute(select(func.count(SolanaPriceDB.id)))
+            total_count = count_result.scalar() or 0
+
+            if total_count == 0:
+                return {
+                    "total_prices": 0,
+                    "first_date": None,
+                    "last_date": None,
+                    "min_price": None,
+                    "max_price": None,
+                    "avg_price": None,
+                }
+
+            # Get date range
+            first_result = await session.execute(
+                select(SolanaPriceDB).order_by(SolanaPriceDB.date.asc()).limit(1)
+            )
+            first_price = first_result.scalar_one_or_none()
+
+            last_result = await session.execute(
+                select(SolanaPriceDB).order_by(SolanaPriceDB.date.desc()).limit(1)
+            )
+            last_price = last_result.scalar_one_or_none()
+
+            # Get price statistics
+            stats_result = await session.execute(
+                select(
+                    func.min(SolanaPriceDB.price_usd),
+                    func.max(SolanaPriceDB.price_usd),
+                    func.avg(SolanaPriceDB.price_usd),
+                )
+            )
+            min_price, max_price, avg_price = stats_result.one()
+
+            return {
+                "total_prices": total_count,
+                "first_date": first_price.date.strftime("%Y-%m-%d")
+                if first_price
+                else None,
+                "last_date": last_price.date.strftime("%Y-%m-%d")
+                if last_price
+                else None,
+                "min_price": float(min_price) if min_price else None,
+                "max_price": float(max_price) if max_price else None,
+                "avg_price": float(avg_price) if avg_price else None,
             }
 
 
