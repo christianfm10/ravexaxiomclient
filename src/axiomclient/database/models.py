@@ -74,8 +74,8 @@ class DevWalletFundingDB(Base):
         Integer, ForeignKey("wallet_addresses.id"), nullable=False, index=True
     )
     signature = Column(
-        String, nullable=False, unique=True, index=True
-    )  # Unique - signature único
+        String, nullable=False, index=True
+    )  # Puede repetirse (una tx puede fondear múltiples wallets)
     amount_sol = Column(Float, nullable=False)
     funded_at = Column(String, nullable=False)
     created_at = Column(DateTime, default=func.now(), nullable=False)
@@ -90,11 +90,6 @@ class DevWalletFundingDB(Base):
         "WalletAddressDB",
         foreign_keys=[funding_wallet_address_id],
         back_populates="sent_fundings",
-    )
-
-    __table_args__ = (
-        Index("idx_wallet_address_id", "wallet_address_id"),
-        Index("idx_funding_wallet_address_id", "funding_wallet_address_id"),
     )
 
     def __repr__(self):

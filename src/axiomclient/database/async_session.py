@@ -282,11 +282,11 @@ class AsyncDatabaseManager:
         Args:
             session: Database session
             wallet: WalletAddressDB instance (the deployer)
-            pair_item: PairItem with funding data
+            dev_wallet_funding: DevWalletFunding data
         """
         from sqlalchemy import select
 
-        # Check if wallet already has funding
+        # Check if wallet already has funding (only one funding per wallet)
         result = await session.execute(
             select(DevWalletFundingDB).filter_by(wallet_address_id=wallet.id)
         )
